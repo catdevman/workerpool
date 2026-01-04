@@ -2,7 +2,7 @@
 
 ![CI Status](https://github.com/catdevman/workerpool/actions/workflows/ci.yml/badge.svg)
 ![Go Version](https://img.shields.io/github/go-mod/go-version/catdevman/workerpool)
-[![Benchmarks](https://img.shields.io/badge/benchmarks-live-green)](https://catdevman.github.io/workerpool/bench/index.html)
+[![Benchmarks](https://img.shields.io/badge/benchmarks-live-green)](https://catdevman.github.io/workerpool/dev/bench/index.html)
 
 A robust, generic, zero-allocation worker pool for Go that specifically targets the "7 Deadly Sins" of concurrency.
 

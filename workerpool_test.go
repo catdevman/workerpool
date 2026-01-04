@@ -21,7 +21,6 @@ func TestBasicProcessing(t *testing.T) {
 	}
 	close(inputs)
 
-	// FIX: Pass nil for the Observer argument
 	pool := New(5, inputs, doubleTask, nil)
 	results := pool.Run(context.Background())
 
@@ -54,7 +53,6 @@ func TestPanicIsolation(t *testing.T) {
 	inputs <- 2
 	close(inputs)
 
-	// FIX: Pass nil for Observer
 	pool := New(2, inputs, flakyTask, nil)
 	results := pool.Run(context.Background())
 
@@ -93,7 +91,6 @@ func TestContextCancellation(t *testing.T) {
 		}
 	}
 
-	// FIX: Pass nil for Observer
 	pool := New(5, inputs, slowTask, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -130,7 +127,6 @@ func TestDynamicResizing(t *testing.T) {
 		return n, nil
 	}
 
-	// FIX: Pass nil for Observer
 	pool := New(1, inputs, trackingTask, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -180,7 +176,6 @@ func TestStressResizing(t *testing.T) {
 		return n, nil
 	}
 
-	// FIX: Pass nil for Observer
 	pool := New(5, inputs, task, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

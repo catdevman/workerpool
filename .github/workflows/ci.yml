@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Testing against the current stable (1.25) and previous stable (1.24)
+        go-version: [ '1.24', '1.25' ]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Vet (Static Analysis)
+        run: go vet ./...
+
+      - name: Test (Race Detector)
+        run: go test -v -race ./...
+
+  benchmark:
+    name: Performance Check
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        # Run benchmarks only on the absolute latest version
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Run Benchmarks
+        run: |
+          go test -bench=. -benchmem ./... | tee benchmark_results.txt
+
+      - name: Upload Benchmark Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results.txt

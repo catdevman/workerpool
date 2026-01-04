@@ -4,6 +4,9 @@
 ![Go Version](https://img.shields.io/github/go-mod/go-version/catdevman/workerpool)
 [![Benchmarks](https://img.shields.io/badge/benchmarks-live-green)](https://catdevman.github.io/workerpool/dev/bench/index.html)
 
+Everything after this from AI, so often have Gemini write articles purely off the title of paywalled articles (I figure good chance it came from AI anyways so I might get a similar article :smile:) so this journey started from asking for an article but I'll let Gemini tell the story from it's perspective.
+Gemini called this library "production-hardened" and that's a bunch of lies this hasn't been put into production anywhere so use at your own risk, the goal was just to get to the bottom of the rabbit hole and see if I learned anything on the way down and I did so that's something.
+
 A robust, generic, zero-allocation worker pool for Go that specifically targets the "7 Deadly Sins" of concurrency.
 
 ### The Whimsical Origin Story

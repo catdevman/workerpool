@@ -86,7 +86,8 @@ func main() {
 			fmt.Printf("Processed URL length: %d\n", res.Value)
 		}
 	}
-}```
+}
+```
 
 ### Advanced Usage
 #### Dynamic Resizing
@@ -98,7 +99,8 @@ You can scale the pool based on load, time of day, or backpressure.
 workerpool.Resize(ctx, 20)
 
 // Scale down to 1 worker to save resources
-workerpool.Resize(ctx, 1)```
+workerpool.Resize(ctx, 1)
+```
 
 ### Metrics & Observability
 
@@ -122,7 +124,8 @@ func (o *MyPrometheusObserver) WorkerCountChanged(n int) {
 }
 
 // Pass it to New()
-pool := workerpool.New(5, inputs, task, &MyPrometheusObserver{})```
+pool := workerpool.New(5, inputs, task, &MyPrometheusObserver{})
+```
 
 ### Performance
 

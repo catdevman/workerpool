@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767567425452,
+  "lastUpdate": 1792109519602,
   "repoUrl": "https://github.com/catdevman/workerpool",
   "entries": {
     "Benchmark": [
@@ -192,6 +192,102 @@ window.BENCHMARK_DATA = {
             "value": 0,
             "unit": "allocs/op",
             "extra": "3240577 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "catdevman@gmail.com",
+            "name": "Lucas Pearson",
+            "username": "catdevman"
+          },
+          "committer": {
+            "email": "catdevman@gmail.com",
+            "name": "Lucas Pearson",
+            "username": "catdevman"
+          },
+          "distinct": true,
+          "id": "71b040e6522809ffbe8d69f6bbb703e4be30ef54",
+          "message": "Let Grok 4.7 take a shot a improving it",
+          "timestamp": "2026-10-15T20:11:24-04:00",
+          "tree_id": "468fbd6f382dacdc9f6f297a43dc7a2bb1d966ab",
+          "url": "https://github.com/catdevman/workerpool/commit/71b040e6522809ffbe8d69f6bbb703e4be30ef54"
+        },
+        "date": 1792109519069,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkThroughput",
+            "value": 475.2,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "2516665 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkThroughput - ns/op",
+            "value": 475.2,
+            "unit": "ns/op",
+            "extra": "2516665 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkThroughput - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "2516665 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkThroughput - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "2516665 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOBound",
+            "value": 11485,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "102949 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOBound - ns/op",
+            "value": 11485,
+            "unit": "ns/op",
+            "extra": "102949 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOBound - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "102949 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkIOBound - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "102949 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAllocations",
+            "value": 328.1,
+            "unit": "ns/op\t       0 B/op\t       0 allocs/op",
+            "extra": "3639712 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAllocations - ns/op",
+            "value": 328.1,
+            "unit": "ns/op",
+            "extra": "3639712 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAllocations - B/op",
+            "value": 0,
+            "unit": "B/op",
+            "extra": "3639712 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkAllocations - allocs/op",
+            "value": 0,
+            "unit": "allocs/op",
+            "extra": "3639712 times\n4 procs"
           }
         ]
       }

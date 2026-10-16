@@ -22,7 +22,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.27'
 
       - name: Run Benchmark
         # We output to a file so the tool can read it

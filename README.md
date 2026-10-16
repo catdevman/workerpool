@@ -26,18 +26,20 @@ The result is this package: An over-engineered, production-hardened, fully instr
 ### Features
 
 * **Type-Safe Generics:** No more `interface{}` casting.
-* **Leak-Proof:** Guaranteed cleanup of goroutines using `sync.WaitGroup` and Context propagation.
-* **Panic Safe:** If a worker panics, the pool catches it, reports it as an error, and keeps chugging.
-* **Dynamic Resizing:** Scale workers up or down *while the pool is running* using `Resize(ctx, n)`.
-* **Observability:** Pluggable `Observer` interface for Prometheus/Datadog metrics.
-* **Deadlock Resistant:** Uses a "Double-Select" pattern to prevent workers from hanging during shutdown.
+* **Leak-Proof:** Every worker is in the pool `WaitGroup`. The results channel closes after those goroutines exit because the `Run` context was cancelled or a worker saw the input channel close. Scaling to zero leaves the channel open. Each worker has a private stop channel, so a scale-down cannot retire a worker started later.
+* **Panic Safe:** A panicking task becomes a `*PanicError` (`errors.As` / `errors.AsType`) carrying the panic value and stack. The worker keeps running.
+* **Dynamic Resizing:** Scale workers up or down *while the pool is running* with `pool.Resize(ctx, n)`. Workers added later still stop when the `Run` context is cancelled.
+* **Observability:** Pluggable `Observer` interface for Prometheus/Datadog metrics. Each worker sets `runtime/pprof` labels (`workerpool=worker`, `worker_id`).
+* **Deadlock Resistant:** Sends on the results channel also select on the pool context, so shutdown does not block on a consumer that has gone away.
 
 ---
 
 ### Installation
 
+Requires Go 1.27 or later.
+
 ```bash
-go get [github.com/catdevman/workerpool](https://github.com/catdevman/workerpool)
+go get github.com/catdevman/workerpool
 ```
 
 ### Quickstart guide
@@ -98,11 +100,12 @@ func main() {
 You can scale the pool based on load, time of day, or backpressure.
 
 ```go
-// Scale up to 20 workers during a burst
-workerpool.Resize(ctx, 20)
+// Scale up to 20 workers during a burst.
+// ctx only cancels this call. Worker lifetime stays with pool.Run.
+pool.Resize(ctx, 20)
 
-// Scale down to 1 worker to save resources
-workerpool.Resize(ctx, 1)
+// Scale down to 1 worker to save resources.
+pool.Resize(ctx, 1)
 ```
 
 ### Metrics & Observability
@@ -138,7 +141,7 @@ This pool is designed to be Zero-Allocation on the hot path (excluding user logi
 
 ### The "7 Deadly Sins" Avoided
 
-- The Leaking Goroutine: Every worker has a distinct shutdown signal via removeCh or ctx.Done.
+- The Leaking Goroutine: Every worker has a private stop channel, and it also selects on the context passed to `Run`.
 
 - The Unprotected Map: We don't share state; we communicate Result structs over channels.
 

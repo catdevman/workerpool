@@ -2,113 +2,197 @@ package workerpool
 
 import (
 	"context"
+	"math"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
-// noOpTask is a helper for tests that don't need real work
-func noOpTask(_ context.Context, _ int) (int, error) {
-	return 0, nil
+type atomicFloat struct {
+	bits atomic.Uint64
 }
 
-func TestAutoScaler_ThresholdStrategy(t *testing.T) {
-	// 1. Setup Pool (Start with 5 workers)
-	inputs := make(chan int)
-	pool := New(5, inputs, noOpTask, nil)
-	pool.Run(context.Background())
+func (a *atomicFloat) Store(v float64) { a.bits.Store(math.Float64bits(v)) }
+func (a *atomicFloat) Load() float64   { return math.Float64frombits(a.bits.Load()) }
 
-	// 2. Setup Metric Mock
-	// We control this value to simulate CPU load
-	var currentMetric float64 = 0.0
-	mockFetcher := func() float64 {
-		return currentMetric
-	}
+func TestAutoScalerThresholdStrategy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		inputs := make(chan int)
+		pool := New(5, inputs, func(ctx context.Context, n int) (int, error) {
+			return n, nil
+		}, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		results := pool.Run(ctx)
+		defer close(inputs)
+		go func() {
+			for range results {
+			}
+		}()
 
-	// 3. Setup Scaler
-	// Check every 10ms. Min: 1, Max: 10.
-	interval := 10 * time.Millisecond
-	scaler := NewAutoScaler(pool, interval, 1, 10, mockFetcher)
+		var metric atomicFloat
+		scaler := NewAutoScaler(pool, 10*time.Millisecond, 1, 10, metric.Load)
+		scaler.WithThresholdStrategy(20, 80, 2)
+		scaler.Start()
+		defer scaler.Stop()
 
-	// Strategy:
-	// > 80.0 -> Add 2 workers
-	// < 20.0 -> Remove 2 workers
-	scaler.WithThresholdStrategy(20.0, 80.0, 2)
+		metric.Store(90)
+		synctest.Sleep(50 * time.Millisecond)
+		if got := pool.CurrentWorkers(); got <= 5 {
+			t.Fatalf("workers = %d, want a scale-up from 5", got)
+		}
 
-	scaler.Start()
-	defer scaler.Stop()
-
-	// --- SCENARIO 1: High Load (Scale Up) ---
-	currentMetric = 90.0              // Above 80.0 threshold
-	time.Sleep(50 * time.Millisecond) // Wait for a few ticks
-
-	if pool.CurrentWorkers() <= 5 {
-		t.Errorf("Expected scaling UP from 5, got %d", pool.CurrentWorkers())
-	}
-
-	// --- SCENARIO 2: Low Load (Scale Down) ---
-	currentMetric = 10.0 // Below 20.0 threshold
-	// It might take a few cycles to scale down if the step is small,
-	// but our step is 2, so it should happen quickly.
-	time.Sleep(50 * time.Millisecond)
-
-	if pool.CurrentWorkers() >= 7 { // It likely went 5->7->9, then should drop
-		t.Errorf("Expected scaling DOWN, got %d", pool.CurrentWorkers())
-	}
-}
-
-func TestAutoScaler_InverseStrategy(t *testing.T) {
-	// Inverse is for Memory: High Metric = Scale DOWN (Panic mode)
-
-	inputs := make(chan int)
-	pool := New(5, inputs, noOpTask, nil)
-	pool.Run(context.Background())
-
-	var currentMetric float64 = 0.0
-	mockFetcher := func() float64 { return currentMetric }
-
-	scaler := NewAutoScaler(pool, 10*time.Millisecond, 1, 10, mockFetcher)
-
-	// Strategy:
-	// > 80.0 -> Remove 2 workers (Save RAM)
-	// < 20.0 -> Add 2 workers (Use idle RAM)
-	scaler.WithInverseThresholdStrategy(20.0, 80.0, 2)
-
-	scaler.Start()
-	defer scaler.Stop()
-
-	// --- SCENARIO: OOM Risk (Scale Down) ---
-	currentMetric = 95.0
-	time.Sleep(50 * time.Millisecond)
-
-	if pool.CurrentWorkers() >= 5 {
-		t.Errorf("Expected scaling DOWN from 5 due to high memory, got %d", pool.CurrentWorkers())
-	}
-}
-
-func TestAutoScaler_HardBounds(t *testing.T) {
-	// Test Min/Max enforcement
-
-	inputs := make(chan int)
-	pool := New(2, inputs, noOpTask, nil) // Start at 2
-	pool.Run(context.Background())
-
-	// Strategy that ALWAYS adds 10 workers
-	mockFetcher := func() float64 { return 100.0 }
-
-	// Min: 1, Max: 5
-	scaler := NewAutoScaler(pool, 10*time.Millisecond, 1, 5, mockFetcher)
-
-	// Custom aggressive strategy
-	scaler.SetStrategy(func(curr int, m float64) int {
-		return curr + 10 // Try to go way above Max
+		metric.Store(10)
+		synctest.Sleep(50 * time.Millisecond)
+		if got := pool.CurrentWorkers(); got >= 7 {
+			t.Fatalf("workers = %d, want a scale-down below 7", got)
+		}
 	})
+}
 
-	scaler.Start()
-	defer scaler.Stop()
+func TestAutoScalerInverseStrategy(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		inputs := make(chan int)
+		pool := New(5, inputs, func(ctx context.Context, n int) (int, error) {
+			return n, nil
+		}, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		results := pool.Run(ctx)
+		defer close(inputs)
+		go func() {
+			for range results {
+			}
+		}()
 
-	time.Sleep(50 * time.Millisecond)
+		var metric atomicFloat
+		metric.Store(95)
+		scaler := NewAutoScaler(pool, 10*time.Millisecond, 1, 10, metric.Load)
+		scaler.WithInverseThresholdStrategy(20, 80, 2)
+		scaler.Start()
+		defer scaler.Stop()
 
-	if pool.CurrentWorkers() > 5 {
-		t.Errorf("Expected to hit MAX ceiling of 5, but got %d", pool.CurrentWorkers())
-	}
+		synctest.Sleep(50 * time.Millisecond)
+		if got := pool.CurrentWorkers(); got >= 5 {
+			t.Fatalf("workers = %d, want a scale-down from 5", got)
+		}
+	})
+}
+
+func TestAutoScalerHardBounds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		inputs := make(chan int)
+		pool := New(2, inputs, func(ctx context.Context, n int) (int, error) {
+			return n, nil
+		}, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		results := pool.Run(ctx)
+		defer close(inputs)
+		go func() {
+			for range results {
+			}
+		}()
+
+		scaler := NewAutoScaler(pool, 10*time.Millisecond, 1, 5, func() float64 { return 100 })
+		scaler.SetStrategy(func(curr int, _ float64) int { return curr + 10 })
+		scaler.Start()
+		defer scaler.Stop()
+
+		synctest.Sleep(50 * time.Millisecond)
+		if got := pool.CurrentWorkers(); got != 5 {
+			t.Fatalf("workers = %d, want the max of 5", got)
+		}
+	})
+}
+
+func TestAutoScalerStopIsIdempotentAndRestartable(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		inputs := make(chan int)
+		pool := New(1, inputs, func(ctx context.Context, n int) (int, error) {
+			return n, nil
+		}, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		results := pool.Run(ctx)
+		defer close(inputs)
+		go func() {
+			for range results {
+			}
+		}()
+
+		var metric atomicFloat
+		scaler := NewAutoScaler(pool, time.Second, 1, 4, metric.Load)
+		scaler.WithThresholdStrategy(10, 50, 1)
+		scaler.Start()
+		scaler.Start()
+
+		metric.Store(100)
+		synctest.Sleep(3 * time.Second)
+		scaled := pool.CurrentWorkers()
+		if scaled <= 1 {
+			t.Fatalf("workers = %d, want a scale-up from 1", scaled)
+		}
+
+		scaler.Stop()
+		scaler.Stop()
+		synctest.Sleep(3 * time.Second)
+		if got := pool.CurrentWorkers(); got != scaled {
+			t.Fatalf("workers changed after Stop: %d to %d", scaled, got)
+		}
+
+		metric.Store(0)
+		scaler.Start()
+		synctest.Sleep(3 * time.Second)
+		if got := pool.CurrentWorkers(); got >= scaled {
+			t.Fatalf("workers after restart = %d, want a scale-down from %d", got, scaled)
+		}
+		scaler.Stop()
+	})
+}
+
+func TestAutoscaledWorkersStopWithRunContext(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		inputs := make(chan int)
+		// Block until the Run context is cancelled. A worker started with
+		// context.Background would stay here and fail the bubble.
+		task := func(ctx context.Context, n int) (int, error) {
+			<-ctx.Done()
+			return 0, ctx.Err()
+		}
+
+		pool := New(1, inputs, task, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		results := pool.Run(ctx)
+		defer close(inputs)
+		go func() {
+			for range results {
+			}
+		}()
+
+		scaler := NewAutoScaler(pool, time.Millisecond, 1, 4, func() float64 { return 100 })
+		scaler.WithThresholdStrategy(0, 1, 1)
+		scaler.Start()
+		synctest.Sleep(10 * time.Millisecond)
+		scaler.Stop()
+
+		if got := pool.CurrentWorkers(); got < 2 {
+			t.Fatalf("workers = %d, want the autoscaler to add workers", got)
+		}
+
+		// Give the added workers a task so they are inside callTask, not
+		// merely parked on the input select.
+		go func() {
+			for i := 0; i < pool.CurrentWorkers(); i++ {
+				select {
+				case inputs <- i:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+		synctest.Wait()
+		cancel()
+	})
 }

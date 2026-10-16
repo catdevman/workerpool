@@ -6,137 +6,172 @@ import (
 	"time"
 )
 
-// MetricFunc returns a current value (e.g., CPU %, Memory bytes, Queue Depth).
+// MetricFunc returns the value the autoscaler should react to.
+// Examples are CPU percent, memory bytes, or queue depth.
 type MetricFunc func() float64
 
-// AutoScaler monitors a metric and resizes the pool within bounds.
+// AutoScaler polls a metric and resizes a pool inside fixed bounds.
 type AutoScaler[T any, R any] struct {
 	pool     *Pool[T, R]
 	interval time.Duration
 	min      int
 	max      int
 
-	// strategy calculates the new worker count based on the metric
-	strategy func(currentCount int, metric float64) int
-
-	// metricFetcher retrieves the value to judge against
 	metricFetcher MetricFunc
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	mu       sync.Mutex
+	strategy func(currentCount int, metric float64) int
+	running  bool
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
-// NewAutoScaler creates the sidecar.
-// It does NOT start it automatically; call Start().
+// NewAutoScaler builds a scaler. It does not start it. Call Start.
+//
+// interval is the time between evaluations and must be positive.
+// min and max are inclusive bounds. A max below min is raised to min.
+// A negative min is treated as zero. fetcher must not be nil.
+//
+// The initial strategy leaves the worker count unchanged until
+// WithThresholdStrategy, WithInverseThresholdStrategy, or SetStrategy
+// replaces it.
 func NewAutoScaler[T any, R any](
 	pool *Pool[T, R],
 	interval time.Duration,
 	min, max int,
 	fetcher MetricFunc,
 ) *AutoScaler[T, R] {
+	if fetcher == nil {
+		panic("workerpool: NewAutoScaler metric fetcher is nil")
+	}
+	if min < 0 {
+		min = 0
+	}
+	if max < min {
+		max = min
+	}
 	return &AutoScaler[T, R]{
 		pool:          pool,
 		interval:      interval,
 		min:           min,
 		max:           max,
 		metricFetcher: fetcher,
-		stopCh:        make(chan struct{}),
-		// Default Strategy: Linear Scaling (can be overridden)
-		// This is just a placeholder; usually you configure this via a helper.
-		strategy: func(curr int, m float64) int { return curr },
+		strategy:      func(curr int, _ float64) int { return curr },
 	}
 }
 
-// SetStrategy allows you to define custom logic.
-// The function receives (currentWorkers, currentMetric) and returns desiredWorkers.
+// SetStrategy replaces the decision function.
+// It receives the current worker count and the latest metric value,
+// and it returns the desired worker count before min and max are applied.
+// A nil strategy panics.
 func (a *AutoScaler[T, R]) SetStrategy(fn func(currentCount int, metric float64) int) {
+	if fn == nil {
+		panic("workerpool: nil autoscaler strategy")
+	}
+	a.mu.Lock()
 	a.strategy = fn
+	a.mu.Unlock()
 }
 
-// Start begins the monitoring loop in a background goroutine.
+// Start starts the polling loop.
+// Start does nothing when the loop is already running.
+// After Stop has returned, Start begins a new loop.
 func (a *AutoScaler[T, R]) Start() {
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		ticker := time.NewTicker(a.interval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-a.stopCh:
-				return
-			case <-ticker.C:
-				a.evaluate()
-			}
-		}
-	}()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.running {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	a.running = true
+	a.wg.Go(func() {
+		defer func() {
+			a.mu.Lock()
+			a.running = false
+			a.mu.Unlock()
+		}()
+		a.loop(ctx)
+	})
 }
 
-// Stop halts the autoscaler.
+// Stop cancels the polling loop and waits for it to exit.
+// Stop is safe to call more than once, including when Start was never called.
+// Start may be called again after Stop returns.
 func (a *AutoScaler[T, R]) Stop() {
-	close(a.stopCh)
+	a.mu.Lock()
+	if !a.running {
+		a.mu.Unlock()
+		return
+	}
+	cancel := a.cancel
+	a.mu.Unlock()
+	cancel()
 	a.wg.Wait()
 }
 
+func (a *AutoScaler[T, R]) loop(ctx context.Context) {
+	ticker := time.NewTicker(a.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.evaluate()
+		}
+	}
+}
+
 func (a *AutoScaler[T, R]) evaluate() {
-	// 1. Get the metric (e.g., CPU Usage)
-	val := a.metricFetcher()
+	a.mu.Lock()
+	strategy := a.strategy
+	a.mu.Unlock()
 
-	// 2. Get current state
 	current := a.pool.CurrentWorkers()
-
-	// 3. Ask strategy for desired count
-	desired := a.strategy(current, val)
-
-	// 4. Enforce Bounds (Min/Max)
+	desired := strategy(current, a.metricFetcher())
 	if desired < a.min {
 		desired = a.min
 	}
 	if desired > a.max {
 		desired = a.max
 	}
-
-	// 5. Act (only if changed)
-	if desired != current {
-		// We use a TODO context or Background here because this is a
-		// system-level event, separate from the job context.
-		a.pool.Resize(context.Background(), desired)
+	if desired == current {
+		return
 	}
+	// Background is intentional. Worker lifetime comes from Pool.Run.
+	// A cancelled job context must not veto a scaling decision, and it
+	// must not become the lifetime of the workers this call adds.
+	a.pool.Resize(context.Background(), desired)
 }
 
-// WithThresholdStrategy configures the scaler to target a specific metric range.
-// Example: Keep CPU between 40% (low) and 80% (high).
-// step: How many workers to add/remove at once (e.g., 1 or 5).
+// WithThresholdStrategy scales up when the metric is above high and down
+// when it is below low. step is how many workers to add or remove at once.
+// A metric between low and high leaves the count unchanged.
+// Use this for a queue depth or a CPU target where a high value means more
+// workers would help.
 func (a *AutoScaler[T, R]) WithThresholdStrategy(low, high float64, step int) {
 	a.SetStrategy(func(current int, metric float64) int {
 		if metric > high {
-			// Resource is hot! Scale DOWN to relieve pressure?
-			// OR Scale UP to process faster?
-			// usually for CPU/Queue, High Metric = Scale UP.
-			// usually for Memory, High Metric = Scale DOWN (to prevent OOM).
-
-			// Let's assume High Metric = Need More Workers (Queue/CPU logic)
 			return current + step
 		}
 		if metric < low {
-			// Resource is idle. Scale DOWN.
 			return current - step
 		}
-		// In the "Goldilocks" zone, do nothing.
 		return current
 	})
 }
 
-// WithInverseThresholdStrategy is for Memory.
-// If Memory is High -> Scale DOWN (stop eating RAM).
-// If Memory is Low -> Scale UP.
+// WithInverseThresholdStrategy scales down when the metric is above high
+// and up when it is below low. Use this for a memory target, where a high
+// value means the pool should do less work.
 func (a *AutoScaler[T, R]) WithInverseThresholdStrategy(low, high float64, step int) {
 	a.SetStrategy(func(current int, metric float64) int {
 		if metric > high {
-			return current - step // Danger zone, reduce load
+			return current - step
 		}
 		if metric < low {
-			return current + step // Free RAM, work harder
+			return current + step
 		}
 		return current
 	})
